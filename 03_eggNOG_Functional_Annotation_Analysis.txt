@@ -1,0 +1,68 @@
+###############################################################################
+# eggNOG Functional Annotation Analysis for Trichoderma citrinoviride
+# Exact code used in the research analysis
+#
+# PURPOSE: Comprehensive functional annotation using eggNOG-mapper
+# INPUT: Predicted protein sequences from Funannotate
+# OUTPUT: COG categories, GO terms, KEGG pathways, protein families
+# TOOLS: eggNOG-mapper v2.+, DIAMOND
+# PARAMETERS: -m diamond, --seed_ortholog_evalue 1e-05, 12 CPUs
+# NOTES: Includes corrected analysis for multi-letter COG codes
+###############################################################################
+
+#!/bin/bash
+
+# Check if the input file exists and looks good
+ls -lh /path/04_Functional_Annotation/Input_data/T_citrinoviride/Trichoderma_citrinoviride_TUCIM_6016.proteins.fa
+
+# Count number of proteins
+grep -c ">" /path/04_Functional_Annotation/Input_data/T_citrinoviride/Trichoderma_citrinoviride_TUCIM_6016.proteins.fa
+
+# First, make sure the output directory exists
+mkdir -p /path/04_Functional_Annotation/Output_data/eggNOG_results/T_citrinoviride
+
+# Now run the command
+emapper.py -i /path/04_Functional_Annotation/Input_data/T_citrinoviride/Trichoderma_citrinoviride_TUCIM_6016.proteins.fa \
+           -o Trichoderma_citrinoviride_eggNOG \
+           --output_dir /path/04_Functional_Annotation/Output_data/eggNOG_results/T_citrinoviride \
+           -m diamond \
+           --cpu 12 \
+           --seed_ortholog_evalue 1e-05
+
+# After it finishes, navigate to the output directory
+cd /path/04_Functional_Annotation/Output_data/eggNOG_results/T_citrinoviride
+
+# CORRECTED analysis accounting for multi-letter COG codes for T. citrinoviride
+echo "=== CORRECTED EGGNOG SUMMARY FOR T_CITRINOVIRIDE ==="
+
+data_rows=$(grep -v '^##' Trichoderma_citrinoviride_eggNOG.emapper.annotations | grep -v '^#query')
+total_proteins=$(echo "$data_rows" | wc -l)
+
+echo "Total proteins: $total_proteins"
+
+# Count proteins with ANY COG annotation (single or multi-letter)
+proteins_with_cog=$(echo "$data_rows" | cut -f7 | grep -vE '^(-|--)$' | grep -E '[A-Z]' | wc -l)
+echo "Proteins with COG: $proteins_with_cog ($(echo "scale=1; $proteins_with_cog * 100 / $total_proteins" | bc)%)"
+
+# For category distribution, we need to split multi-letter codes
+echo ""
+echo "COG CATEGORY DISTRIBUTION (counting multi-letter codes):"
+
+# Split multi-letter codes and count individual categories
+echo "$data_rows" | cut -f7 | grep -E '[A-Z]' | grep -vE '^(-|--)$' | \
+  # Split multi-letter codes into individual letters
+  grep -o '[A-Z]' | \
+  sort | uniq -c | sort -nr
+
+echo ""
+echo "DETAILED BREAKDOWN:"
+echo "Single-letter COG proteins: $(echo "$data_rows" | cut -f7 | grep -E '^[A-Z]$' | wc -l)"
+echo "Multi-letter COG proteins: $(echo "$data_rows" | cut -f7 | grep -E '[A-Z][A-Z]+' | wc -l)"
+echo "Total COG-annotated proteins: $proteins_with_cog"
+
+# GO and KEGG remain the same
+proteins_with_go=$(echo "$data_rows" | cut -f10 | grep 'GO:' | wc -l)
+echo "Proteins with GO: $proteins_with_go ($(echo "scale=1; $proteins_with_go * 100 / $total_proteins" | bc)%)"
+
+proteins_with_kegg=$(echo "$data_rows" | cut -f12 | grep 'ko:' | wc -l)
+echo "Proteins with KEGG: $proteins_with_kegg ($(echo "scale=1; $proteins_with_kegg * 100 / $total_proteins" | bc)%)"
