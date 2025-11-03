@@ -1,0 +1,123 @@
+###############################################################################
+# RNA-Seq Analysis Pipeline for Trichoderma Species
+# Exact code used in the research analysis
+#
+# PURPOSE: Transcriptome assembly and validation using RNA-seq data
+# INPUT: RNA-seq FASTQ files, masked genome assemblies
+# OUTPUT: Transcript assemblies, alignment files, quality reports
+# TOOLS: HISAT2, StringTie, samtools, FastQC, gffcompare
+# PARAMETERS: HISAT2 indexing, StringTie merge, 10-12 threads
+# NOTES: Includes transcript validation and quality assessment
+###############################################################################
+
+#!/bin/bash
+
+# Download required tools for RNA-Seq Data acquisition and analysis 
+conda create -n rnaseq -c bioconda hisat2 samtools stringtie fastqc sra-tools
+conda activate rnaseq
+
+###############################################################################
+# Step 1: Quality Control with FastQC
+# Run FastQC on both read pairs for each dataset
+###############################################################################
+
+#!/bin/bash
+
+fastqc ~/Trichoderma_pan_genome_clean_run/RNA_Seq/rnaseq_raw/T_harzianum_SSCW_24h/SRR976277_1.fastq \
+       ~/Trichoderma_pan_genome_clean_run/RNA_Seq/rnaseq_raw/T_harzianum_SSCW_24h/SRR976277_2.fastq \
+       -o ~/Trichoderma_pan_genome_clean_run/RNA_Seq/fastqc_output/T_harzianum_SSCW_24h/
+
+###############################################################################
+# Step 2: HISAT2 Genome Indexing
+# Build genome index for alignment
+###############################################################################
+
+#!/bin/bash
+
+mkdir -p ~/Trichoderma_pan_genome_clean_run/RNA_Seq/hisat2_index/T_harzianum
+
+hisat2-build ~/Trichoderma_pan_genome_clean_run/genomes/repeatmodeler_output/repeatmasker_output/T_harzianum/GCA_010015525.1_ASM1001552v1_genomic.fna.masked \
+             ~/Trichoderma_pan_genome_clean_run/RNA_Seq/hisat2_index/T_harzianum/genome_index
+
+###############################################################################
+# Step 3: Read Alignment with HISAT2
+# Align RNA-Seq reads to the genome
+###############################################################################
+
+#!/bin/bash
+
+# Prepare Output Directory
+mkdir -p ~/Trichoderma_pan_genome_clean_run/RNA_Seq/alignments/T_harzianum
+
+# Run HISAT2 Alignment
+hisat2 -x ~/Trichoderma_pan_genome_clean_run/RNA_Seq/hisat2_index/T_harzianum/genome_index \
+       -1 ~/Trichoderma_pan_genome_clean_run/RNA_Seq/rnaseq_raw/T_harzianum_SSCW_24h/SRR976277_1.fastq \
+       -2 ~/Trichoderma_pan_genome_clean_run/RNA_Seq/rnaseq_raw/T_harzianum_SSCW_24h/SRR976277_2.fastq \
+       -S ~/Trichoderma_pan_genome_clean_run/RNA_Seq/alignments/T_harzianum/SRR976277_SSCW.sam
+
+###############################################################################
+# Step 4: SAM/BAM Processing
+# Convert, sort, and index alignment files
+###############################################################################
+
+#!/bin/bash
+
+# Convert SAM to unsorted BAM
+samtools view -bS ~/Trichoderma_pan_genome_clean_run/RNA_Seq/alignments/T_harzianum/SRR976277_SSCW.sam \
+  -o ~/Trichoderma_pan_genome_clean_run/RNA_Seq/alignments/T_harzianum/SRR976277_SSCW.bam
+
+# Sort BAM using 10 threads
+samtools sort -@ 10 ~/Trichoderma_pan_genome_clean_run/RNA_Seq/alignments/T_harzianum/SRR976277_SSCW.bam \
+  -o ~/Trichoderma_pan_genome_clean_run/RNA_Seq/alignments/T_harzianum/SRR976277_SSCW.sorted.bam
+
+# Index BAM for fast lookups (optional but recommended)
+samtools index ~/Trichoderma_pan_genome_clean_run/RNA_Seq/alignments/T_harzianum/SRR976277_SSCW.sorted.bam
+
+###############################################################################
+# Step 5: Transcript Assembly with StringTie
+# Assemble transcripts from aligned reads
+###############################################################################
+
+#!/bin/bash
+
+mkdir -p ~/Trichoderma_pan_genome_clean_run/RNA_Seq/transcripts/T_harzianum
+
+# Run stringtie
+stringtie ~/Trichoderma_pan_genome_clean_run/RNA_Seq/alignments/T_harzianum/SRR976277_SSCW.sorted.bam \
+  -o ~/Trichoderma_pan_genome_clean_run/RNA_Seq/transcripts/T_harzianum/SRR976277_SSCW.gtf \
+  -p 10 \
+  -l SSCW
+
+# To evaluate generated gtf file, run gffcompare in self-comparison mode
+ffcompare -o SSCW_compare \ ~/Trichoderma_pan_genome_clean_run/RNA_Seq/transcripts/T_harzianum/SRR976277_SSCW.gtf
+
+###############################################################################
+# Step 6: Merge GTFs Using StringTie
+# Combine transcript assemblies from multiple samples
+###############################################################################
+
+#!/bin/bash
+
+# First head to folder and make sure GTF files are there
+cd ~/Trichoderma_pan_genome_clean_run/RNA_Seq/transcripts/T_harzianum/
+ls *.gtf
+
+# Merge
+stringtie --merge -p 10 -o merged_T_harzianum.gtf gtf_list.txt
+
+###############################################################################
+# Step 7: Transcriptome Validation
+# Validate assembled transcripts and generate statistics
+###############################################################################
+
+#!/bin/bash
+
+# Step 7.1 Structural Validation with gffread 
+# For example for T. longibrachiatum
+gffread T_longibrachiatum_merged.gtf \
+  -g /path/Trichoderma_pan_genome_clean_run/genomes/repeatmodeler_output/repeatmasker_output/T_longibrachiatum/GCA_026259275.1_ASM2625927v1_genomic.fna.masked \
+  -E > /path/Trichoderma_pan_genome_clean_run/RNA_Seq/transcripts/Validation/T_longibrachiatum.gffread.errors.txt 
+
+# Step 7.2 Generate summary stats of transcript structure
+gffcompare -o /path/Trichoderma_pan_genome_clean_run/RNA_Seq/transcripts/Validation/T_longibrachiatum \
+  T_longibrachiatum_merged.gtf
