@@ -1,0 +1,25 @@
+###############################################################################
+# Funannotate Gene Prediction Pipeline
+# Exact code used in the research analysis
+#
+# PURPOSE: Structural gene annotation of Trichoderma genomes using evidence-based prediction
+# INPUT: Masked genome assemblies, transcript evidence, protein evidence
+# OUTPUT: Predicted genes, proteins, and functional annotations
+# TOOLS: Funannotate v1.8.+
+# PARAMETERS: --augustus_species fusarium_graminearum, 10-12 CPUs
+# NOTES: Uses pooled Trichoderma proteins and species-specific transcripts as evidence
+###############################################################################
+
+#!/bin/bash
+
+# funannotate predict Command for T. longibrachiatum
+funannotate predict \
+  -i /path/Input/T_longibrachiatum/T_longibrachiatum.cleaned.renamed.fasta \
+  -o /path/Output/T_longibrachiatum \
+  --species "Trichoderma longibrachiatum" \
+  --strain FL-4 \
+  --transcript_evidence /path/Input/T_longibrachiatum/transcripts_T_longibrachiatum.renamed.fa \
+  --protein_evidence /path/Input/T_species_FAA_Final/pooled_Trichoderma_protein_cdhit99.faa \
+  --augustus_species fusarium_graminearum \
+  --cpus 12
+
