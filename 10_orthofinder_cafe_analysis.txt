@@ -1,0 +1,258 @@
+###############################################################################
+# OrthoFinder and CAFE Analysis Pipeline for Trichoderma Species
+# Exact code used in the research analysis
+#
+# PURPOSE: Orthology inference and gene family evolution across Trichoderma
+# INPUT: Protein sequences from 14 species (12 Trichoderma + 2 outgroups)
+# OUTPUT: Orthogroups, species tree, evolving gene families
+# TOOLS: OrthoFinder v2.5.+, CAFE5
+# PARAMETERS: 14 threads, MSA method, p-value 0.05, DIAMOND search
+# NOTES: Identifies significantly expanding/contracting gene families
+###############################################################################
+
+#!/bin/bash
+
+# Install OrthoFinder
+conda install -c bioconda orthofinder
+
+# Verify OrthoFinder Installation
+orthofinder -h
+
+# OrthoFinder Analysis
+# Navigate to OrthoFinder directory
+cd ~/path/04_Functional_Annotation/Input_data/orthofinder_analysis
+
+# Verify the files
+ls
+
+# Run OrthoFinder on 14 proteomes (12 Trichoderma + 2 outgroups)
+orthofinder \
+-f /path/04_Functional_Annotation/Input_data/orthofinder_analysis \
+-t 14 \
+-a 6 \
+-M msa \
+-S diamond \
+-o /path/04_Functional_Annotation/Output_data/orthofinder_analysis/OrthoFinder_Output_14_Species
+
+###############################################################################
+# CAFE Input Preparation
+# Prepare CAFE input files from OrthoFinder output
+###############################################################################
+
+#!/bin/bash
+
+# Navigate to OrthoFinder results
+cd ~/Trichoderma_pan_genome_clean_run/04_Functional_Annotation/Output_data/orthofinder_analysis/OrthoFinder_Output_14_Species/Results_*
+
+# Create CAFE input file manually
+head -n 1 Orthogroups/Orthogroups.GeneCount.tsv | sed 's/^Orthogroup/Desc\tFamily_ID/' > cafe_input.counts.txt
+tail -n +2 Orthogroups/Orthogroups.GeneCount.tsv | sed 's/^/NA\t/' >> cafe_input.counts.txt
+
+# Copy the species tree
+cp Species_Tree/SpeciesTree_rooted_node_labels.nwk ./
+
+# Verify files
+echo "CAFE input file created:"
+head -n 3 cafe_input.counts.txt
+echo -e "\nSpecies tree copied:"
+ls -l SpeciesTree_rooted_node_labels.nwk
+
+###############################################################################
+# CAFE Analysis
+# Run CAFE5 analysis to identify significantly changing gene families
+###############################################################################
+
+#!/bin/bash
+
+# Navigate to directory with prepared files
+cd ~/path/04_Functional_Annotation/Output_data/orthofinder_analysis/OrthoFinder_Output_14_Species/Results_*
+
+# Run CAFE5 with p-value filter
+cafe5 -i cafe_input.counts.txt -t SpeciesTree_rooted_node_labels.nwk -o cafe_results -P 0.05 -c 6
+
+###############################################################################
+# Extract Significant Gene Families
+# Extract and analyze significant gene families from CAFE results
+###############################################################################
+
+#!/bin/bash
+
+cd ~/path/04_Functional_Annotation/Output_data/orthofinder_analysis/OrthoFinder_Output_14_Species/Results_*
+
+# Get significant OGs
+grep "y" cafe_results/Base_family_results.txt | cut -f1 > sig_OGs.list
+
+# Count significant families
+echo "Total significant gene families: $(wc -l < sig_OGs.list)"
+
+# Create master table with significance
+cp Orthogroups/Orthogroups.GeneCount.tsv OG_master.tsv
+awk -F'\t' 'NR==1 {print $0 "\tsig_in_cafe"; next} 
+NR==FNR {sig[$1]=1; next} 
+{print $0 "\t" (sig[$1] ? "True" : "False")}' sig_OGs.list OG_master.tsv > OG_master_with_sig.tsv
+
+echo "Master table with significance created: OG_master_with_sig.tsv"
+
+###############################################################################
+# Functional Annotation Mapping
+# Map significant genes to functional annotations
+###############################################################################
+
+#!/bin/bash
+
+cd ~/Trichoderma_pan_genome_clean_run/04_Functional_Annotation/Output_data/orthofinder_analysis/OrthoFinder_Output_14_Species/Results_*
+
+# Create directory for functional mapping
+mkdir -p functional_mapping
+cd functional_mapping
+
+# Create gene-OG mapping for significant families
+python3 -c "
+import pandas as pd
+
+# Read OrthoFinder results
+orthogroups = pd.read_csv('../Orthogroups/Orthogroups.tsv', sep='\t')
+sig_ogs = pd.read_csv('../sig_OGs.list', header=None, names=['OG'])
+
+# Process each species column to create gene-OG mapping
+all_genes = []
+for species_col in orthogroups.columns[1:]:
+    temp_df = orthogroups[['Orthogroup', species_col]].copy()
+    temp_df = temp_df.rename(columns={species_col: 'Genes'})
+    temp_df = temp_df[temp_df['Genes'].notna()]
+    temp_df['Genes'] = temp_df['Genes'].str.split(', ')
+    temp_df = temp_df.explode('Genes')
+    all_genes.append(temp_df)
+
+# Combine and filter for significant OGs
+all_genes_df = pd.concat(all_genes, ignore_index=True)
+sig_genes_df = all_genes_df[all_genes_df['Orthogroup'].isin(sig_ogs['OG'])]
+sig_genes_df.to_csv('sig_og_gene_mapping.tsv', sep='\t', index=False)
+
+print(f'Extracted {len(sig_genes_df)} genes from {len(sig_ogs)} significant OGs')
+"
+
+# Extract gene names for functional lookup
+cut -f2 sig_og_gene_mapping.tsv | tail -n +2 | sort -u > all_sig_genes.txt
+echo "Unique genes for functional annotation: $(wc -l < all_sig_genes.txt)"
+
+###############################################################################
+# Functional Annotation Analysis
+# Map eggNOG annotations to significant genes
+###############################################################################
+
+#!/bin/bash
+
+# Based on the sample output, let's map the columns correctly:
+# Column 1: query_name (Gene)
+# Column 7: COG_category
+# Column 8: Description  
+# Column 10: GO_terms (this is where they appear to be)
+# Column 12: EC_Number
+# Column 13: KEGG_ko
+# Column 14: KEGG_Pathway
+# Column 21: Preferred_name
+
+awk 'BEGIN {FS=OFS="\t"} !/^#/ && FNR==1 {print "Gene", "COG_Category", "Description", "GO_Terms", "EC_Number", "KEGG_KO", "KEGG_Pathway", "Preferred_Name"; next} 
+NR==FNR {genes[$1]; next} 
+$1 in genes {print $1, $7, $8, $10, $12, $13, $14, $21}' all_sig_genes.txt all_trichoderma_eggnog_annotations.tsv > sig_genes_final_summary.tsv
+
+# Check the final summary
+echo "First few lines of final summary:"
+head -n 5 sig_genes_final_summary.tsv
+
+# Now let's analyze the GO terms properly
+echo -e "\nGO term statistics:"
+echo "Genes with GO terms: $(cut -f 4 sig_genes_final_summary.tsv | tail -n +2 | grep -v "^-$" | grep -v "^$" | wc -l)"
+
+# Extract and count GO terms
+cut -f 4 sig_genes_final_summary.tsv | tail -n +2 | grep -v "^-$" | tr ',' '\n' | grep "GO:" | sort | uniq -c | sort -nr > go_term_counts.txt
+
+echo -e "\nTop GO terms:"
+head -n 10 go_term_counts.txt
+
+# Analyze COG categories
+echo -e "\nTop COG categories:"
+cut -f 2 sig_genes_final_summary.tsv | tail -n +2 | grep -v "^-$" | sort | uniq -c | sort -nr | head -n 10
+
+# Analyze KEGG pathways
+echo -e "\nTop KEGG pathways:"
+cut -f 7 sig_genes_final_summary.tsv | tail -n +2 | grep -v "^-$" | tr ',' '\n' | grep -E "(ko|map)" | sort | uniq -c | sort -nr | head -n 10
+
+# Let's also create a separate file with just GO terms for enrichment analysis
+cut -f 4 sig_genes_final_summary.tsv | tail -n +2 | grep -v "^-$" > all_go_terms.txt
+
+echo -e "\nCreated file with GO terms: all_go_terms.txt"
+wc -l all_go_terms.txt
+
+# For genes with multiple GO terms, let's split them into one per line
+tr ',' '\n' < all_go_terms.txt | grep "GO:" | sort | uniq > unique_go_terms.txt
+
+echo "Unique GO terms found: $(wc -l < unique_go_terms.txt)"
+
+# Let's see what the most common descriptions are
+cut -f 3 sig_genes_final_summary.tsv | tail -n +2 | grep -v "^-$" | sort | uniq -c | sort -nr | head -n 15
+
+# And the most common EC numbers
+cut -f 5 sig_genes_final_summary.tsv | tail -n +2 | grep -v "^-$" | sort | uniq -c | sort -nr | head -n 10
+
+# Create a comprehensive report
+echo "=== FUNCTIONAL ANNOTATION SUMMARY ===" > annotation_report.txt
+echo "Total significant genes: $(wc -l < all_sig_genes.txt)" >> annotation_report.txt
+echo "Genes with eggNOG annotations: $(wc -l < sig_genes_eggnog_annotations.tsv)" >> annotation_report.txt
+echo "Genes with COG categories: $(cut -f 2 sig_genes_final_summary.tsv | tail -n +2 | grep -v "^-$" | wc -l)" >> annotation_report.txt
+echo "Genes with GO terms: $(cut -f 4 sig_genes_final_summary.tsv | tail -n +2 | grep -v "^-$" | wc -l)" >> annotation_report.txt
+echo "Genes with EC numbers: $(cut -f 5 sig_genes_final_summary.tsv | tail -n +2 | grep -v "^-$" | wc -l)" >> annotation_report.txt
+echo "Genes with KEGG annotations: $(cut -f 6 sig_genes_final_summary.tsv | tail -n +2 | grep -v "^-$" | wc -l)" >> annotation_report.txt
+
+echo -e "\nTop 5 COG categories:" >> annotation_report.txt
+cut -f 2 sig_genes_final_summary.tsv | tail -n +2 | grep -v "^-$" | sort | uniq -c | sort -nr | head -n 5 >> annotation_report.txt
+
+echo -e "\nTop 5 GO terms:" >> annotation_report.txt
+head -n 5 go_term_counts.txt >> annotation_report.txt
+
+echo -e "\nAnnotation report saved to annotation_report.txt"
+cat annotation_report.txt
+
+###############################################################################
+# Tree Visualization
+# Create phylogenetic tree visualization with evolutionary changes
+###############################################################################
+
+#!/bin/bash
+
+cd ~/Trichoderma_pan_genome_clean_run/04_Functional_Annotation/Output_data/orthofinder_analysis/OrthoFinder_Output_14_Species/Results_*
+
+# Create simplified tree for visualization
+sed 's/<[0-9]*>//g' SpeciesTree_rooted_node_labels.nwk > SpeciesTree_simplified.nwk
+
+# Create R script for tree visualization
+cat > create_tree_visualization.R << 'EOF'
+#!/usr/bin/env Rscript
+library(ggtree)
+library(ggplot2)
+
+# Read tree and net change data
+tree <- read.tree("SpeciesTree_simplified.nwk")
+net_change <- read.csv("cafe_results/net_change.csv")
+
+# Create tree with node numbers
+p <- ggtree(tree) + 
+  geom_tiplab(size=3) +
+  geom_text(aes(label=node), hjust=-.3, size=2, color="blue") +
+  theme_tree2() +
+  ggtitle("Trichoderma Phylogeny with Evolutionary Changes")
+
+# Save tree
+ggsave("tree_with_node_numbers.pdf", p, width=12, height=10)
+
+# Create net change summary
+write.csv(net_change, "net_change_summary.csv", row.names=FALSE)
+
+print("Tree saved as: tree_with_node_numbers.pdf")
+print("Net change data saved as: net_change_summary.csv")
+print("Use node numbers to map evolutionary changes manually")
+EOF
+
+# Run R script
+Rscript create_tree_visualization.R
