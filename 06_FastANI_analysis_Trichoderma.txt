@@ -1,0 +1,158 @@
+###############################################################################
+# FastANI Analysis for Trichoderma Species - Complete Workflow
+# Exact code used in the research analysis
+#
+# PURPOSE: Calculate Average Nucleotide Identity between Trichoderma genomes
+# INPUT: Genome assemblies in FASTA format
+# OUTPUT: ANI matrix, heatmap visualizations, phylogenetic trees
+# TOOLS: FastANI, R (ggplot2, pheatmap, ggtree)
+# PARAMETERS: 8 threads, all-vs-all comparison
+# NOTES: Includes R scripts for visualization and clustering analysis
+###############################################################################
+
+#!/bin/bash
+
+# Install fastani
+conda install -c bioconda fastani
+
+# Run FastANI with multiple threads 
+fastani --ql genome_list.txt --rl genome_list.txt -o fastani_results.txt -t 8
+
+# Check that the results file was created
+ls -la fastani_results.txt
+
+# See how many comparisons were made 
+wc -l fastani_results.txt
+
+# Look at the first few lines of the results
+head fastani_results.txt
+
+# Check some sample ANI values
+awk '{print $3}' fastani_results.txt | sort -n | head -10  # Lowest ANI values
+awk '{print $3}' fastani_results.txt | sort -nr | head -10 # Highest ANI values
+
+###############################################################################
+# R Script: make_heatmap.R
+# Used for generating ANI heatmap visualizations
+###############################################################################
+
+# Load required libraries
+library(reshape2)
+library(ggplot2)
+library(viridis)
+
+# 1. Read the FastANI results
+cat("Reading FastANI results...\n")
+data <- read.table("fastani_results.txt", header = FALSE, sep = "\t")
+colnames(data) <- c("Query", "Reference", "ANI", "Frags", "Total")
+
+# 2. Clean up the species names (remove the long file paths)
+cat("Cleaning up species names...\n")
+data$Query <- gsub(".*/", "", data$Query)  # Remove path
+data$Query <- gsub("\\..*", "", data$Query) # Remove file extension
+data$Query <- gsub("_genomic", "", data$Query) # Remove "_genomic"
+data$Query <- gsub("GCA_.*?_", "", data$Query) # Remove GCA numbers
+
+data$Reference <- gsub(".*/", "", data$Reference)
+data$Reference <- gsub("\\..*", "", data$Reference)
+data$Reference <- gsub("_genomic", "", data$Reference)
+data$Reference <- gsub("GCA_.*?_", "", data$Reference)
+
+# 3. Convert to a matrix format for the heatmap
+cat("Creating matrix for heatmap...\n")
+ani_matrix <- acast(data, Query ~ Reference, value.var = "ANI")
+
+# 4. Create the heatmap
+cat("Creating heatmap...\n")
+heatmap_plot <- ggplot(data, aes(x=Reference, y=Query, fill=ANI)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(aes(label = round(ANI, 1)), color = "black", size = 2.5) +
+  scale_fill_viridis(option = "plasma", name = "ANI (%)", limits = c(60, 100)) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text = element_text(size = 8),
+        plot.title = element_text(hjust = 0.5)) +
+  labs(x = "Reference Genome", 
+       y = "Query Genome", 
+       title = "Average Nucleotide Identity (ANI) between Trichoderma species")
+
+# 5. Save the plot
+cat("Saving heatmap...\n")
+ggsave("fastani_heatmap.pdf", heatmap_plot, width = 12, height = 10, dpi = 300)
+ggsave("fastani_heatmap.png", heatmap_plot, width = 12, height = 10, dpi = 300)
+
+cat("Done! Check fastani_heatmap.pdf and fastani_heatmap.png\n")
+
+###############################################################################
+# R Script: tree_heatmap.R  
+# Used for generating tree-based ANI heatmap visualizations
+###############################################################################
+
+# Load required libraries
+library(reshape2)
+library(viridis)
+library(ape)
+library(pheatmap)
+
+# 1. Read the FastANI results
+cat("Reading FastANI results...\n")
+data <- read.table("fastani_results.txt", header = FALSE, sep = "\t")
+colnames(data) <- c("Query", "Reference", "ANI", "Frags", "Total")
+
+# 2. Clean up the species names
+cat("Cleaning species names...\n")
+data$Query <- gsub(".*/", "", data$Query)
+data$Query <- gsub("\\..*", "", data$Query)
+data$Query <- gsub("_genomic", "", data$Query)
+data$Query <- gsub("GCA_.*?_", "", data$Query)
+
+data$Reference <- gsub(".*/", "", data$Reference)
+data$Reference <- gsub("\\..*", "", data$Reference)
+data$Reference <- gsub("_genomic", "", data$Reference)
+data$Reference <- gsub("GCA_.*?_", "", data$Reference)
+
+# 3. Convert to a matrix format
+cat("Creating ANI matrix...\n")
+ani_matrix <- acast(data, Query ~ Reference, value.var = "ANI")
+
+# 4. FILL MISSING VALUES with a low ANI value (e.g., 50) instead of 0
+cat("Filling missing values...\n")
+ani_matrix[is.na(ani_matrix)] <- 50  # More biologically reasonable than 0
+
+# 5. Create the heatmap WITHOUT building a separate tree
+# Let pheatmap build its own dendrograms from the ANI matrix
+cat("Creating heatmap with automatic clustering...\n")
+png("ani_heatmap_auto_cluster.png", width = 3000, height = 2500, res = 300)
+pheatmap(ani_matrix,
+         color = viridis(100),
+         fontsize_row = 8,
+         fontsize_col = 8,
+         main = "ANI Heatmap with Automatic Clustering",
+         clustering_method = "average")  # This creates dendrograms automatically
+dev.off()
+
+# 6. Alternative: Create a simple heatmap without dendrograms
+cat("Creating simple heatmap...\n")
+png("ani_heatmap_simple.png", width = 3000, height = 2500, res = 300)
+pheatmap(ani_matrix,
+         color = viridis(100),
+         fontsize_row = 8,
+         fontsize_col = 8,
+         main = "ANI Heatmap (Simple)",
+         cluster_rows = FALSE,  # No dendrograms
+         cluster_cols = FALSE)  # No dendrograms
+dev.off()
+
+cat("Done! Check ani_heatmap_auto_cluster.png and ani_heatmap_simple.png\n")
+cat("The first file has dendrograms, the second is a simple matrix view\n")
+
+###############################################################################
+# Bash commands to execute the R scripts
+# These were run after creating the R script files
+###############################################################################
+
+#!/bin/bash
+
+# Run the R Scripts
+Rscript make_heatmap.R
+Rscript tree_heatmap.R
