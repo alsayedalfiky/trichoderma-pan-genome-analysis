@@ -1,0 +1,321 @@
+###############################################################################
+# GenBank File Filtering for antiSMASH Analysis
+# Exact code used in the research analysis
+#
+# PURPOSE: Identify secondary metabolite biosynthetic gene clusters in Trichoderma genomes
+# INPUT: Filtered GenBank files with CDS features only
+# OUTPUT: BGC predictions, domain annotations, MIBiG comparisons
+# TOOLS: antiSMASH v6.0, BLAST, HMMER
+# PARAMETERS: --taxon fungi, --cb-general, e-value 1e-5 for BLAST
+# NOTES: GenBank files pre-filtered to remove contigs without CDS features
+###############################################################################
+
+#!/bin/bash
+
+# Set paths for T. virens - corrected directory structure
+INPUT_FILE="/home/bioalfiky25/Trichoderma_pan_genome_clean_run/04_Functional_Annotation/Input_data/T_virens/Trichoderma_virens_G-41.gbk"
+OUTPUT_FILE="/home/bioalfiky25/Trichoderma_pan_genome_clean_run/04_Functional_Annotation/Input_data/T_virens/Trichoderma_virens_G-41.properly_filtered.gbk"
+
+# Create the Python filtering script
+cat > filter_genbank.py << 'EOF'
+#!/usr/bin/env python3
+
+from Bio import SeqIO
+import sys
+
+def filter_genbank(input_file, output_file):
+    """
+    Reads a GenBank file and writes a new one, containing only contigs (sequences)
+    that have at least one CDS feature.
+    """
+    print(f"Reading records from {input_file}...")
+    
+    # Parse all records from the input file
+    all_records = list(SeqIO.parse(input_file, "genbank"))
+    print(f"Found {len(all_records)} total contigs.")
+    
+    # Filter records: keep only those with at least one CDS feature
+    filtered_records = []
+    for record in all_records:
+        cds_count = sum(1 for feature in record.features if feature.type == "CDS")
+        if cds_count > 0:
+            filtered_records.append(record)
+            print(f"  Keeping contig '{record.id}' with {cds_count} CDS features.")
+        else:
+            print(f"  Discarding contig '{record.id}' with 0 CDS features.")
+    
+    print(f"Keeping {len(filtered_records)} contigs with CDS features.")
+    
+    # Write the filtered records to a new GenBank file
+    if filtered_records:
+        SeqIO.write(filtered_records, output_file, "genbank")
+        print(f"Successfully wrote filtered records to {output_file}")
+    else:
+        print("Error: No records with CDS features were found!", file=sys.stderr)
+        sys.exit(1)
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        print("Usage: python filter_genbank.py <input.gbk> <output.gbk>")
+        sys.exit(1)
+    
+    input_gbk = sys.argv[1]
+    output_gbk = sys.argv[2]
+    filter_genbank(input_gbk, output_gbk)
+EOF
+
+# Make the script executable and run it
+chmod +x filter_genbank.py
+python filter_genbank.py "$INPUT_FILE" "$OUTPUT_FILE"
+
+###############################################################################
+# antiSMASH Biosynthetic Gene Cluster Analysis
+# Run antiSMASH to identify secondary metabolite clusters
+###############################################################################
+
+#!/bin/bash
+
+# Set paths for T. virens - corrected directory structure
+INPUT_GBK="/path/04_Functional_Annotation/Input_data/T_virens/Trichoderma_virens_G-41.properly_filtered.gbk"
+OUTPUT_DIR="/path/04_Functional_Annotation/Output_data/antiSMASH_results/T_virens"
+
+# Create output directory
+mkdir -p "$OUTPUT_DIR"
+
+# Run antiSMASH with consistent parameters
+antismash \
+    "$INPUT_GBK" \
+    --taxon fungi \
+    --cb-general \
+    --cc-mibig \
+    --cpus 12 \
+    --output-dir "$OUTPUT_DIR"
+
+echo "antiSMASH analysis completed for T. virens"
+
+###############################################################################
+# antiSMASH Results Analysis
+# Analyze BGC types and hybrid regions
+###############################################################################
+
+#!/bin/bash
+
+# Analyze antiSMASH results
+# Get full product list for each hybrid region
+jq -r '.records[].features[] | select(.type == "region") | {region: .qualifiers.region_number[0], product: .qualifiers.product[]} | "\(.region)\t\(.product)"' *.json | sort -u | awk '
+{
+    products[$1] = (products[$1] ? products[$1] "; " : "") $2
+}
+END {
+    for (region in products) {
+        split(products[region], arr, "; ");
+        unique_count = 0;
+        delete seen;
+        for (i in arr) {
+            if (!seen[arr[i]]++) unique_count++;
+        }
+        if (unique_count > 1) {
+            print "Region " region " has " unique_count " unique products: " products[region]
+        }
+    }
+}'
+
+# Harmonized count of hybrid regions
+jq -r '.records[].features[] | select(.type == "region") | {region: .qualifiers.region_number[0], product: .qualifiers.product[]} | "\(.region)\t\(.product)"' *.json \
+| sort -u \
+| awk '
+{
+    products[$1] = (products[$1] ? products[$1] "; " : "") $2
+}
+END {
+    for (region in products) {
+        split(products[region], arr, "; ");
+        delete seen;
+        for (i in arr) seen[arr[i]]++;
+        if (length(seen) > 1) print region;
+    }
+}' | sort -u | wc -l
+
+# Count all BGC types
+jq -r '.records[].features[] | select(.type == "region") | .qualifiers.product[]' *.json | sort | uniq -c | sort -nr
+
+# List all unique feature types
+jq -r '.records[].features[].type' *.json | sort | uniq -c
+
+###############################################################################
+# BGC Protein Extraction and Validation
+# Extract proteins from antiSMASH results for downstream analysis
+###############################################################################
+
+#!/bin/bash
+
+# Extract proteins from antiSMASH GBK files
+cd "/path/04_Functional_Annotation/Output_data/antiSMASH_results/T_virens"
+
+# Create protein extraction script
+cat > extract_proteins.py << 'EOF'
+#!/usr/bin/env python3
+
+import os
+from Bio import SeqIO
+
+# Automatically find all .gbk files in the current directory
+gbk_files = [f for f in os.listdir('.') if f.endswith('.gbk')]
+
+# Exclude the "properly_filtered" file if present
+gbk_files = [f for f in gbk_files if 'properly_filtered' not in f]
+
+# Set the output file name
+output_faa = "BGC_proteins_validated.faa"
+
+# Use a set to store unique protein IDs to avoid duplicates
+extracted_proteins = set()
+
+# Iterate through each region .gbk file
+with open(output_faa, "w") as out_f:
+    for gbk_file in gbk_files:
+        for record in SeqIO.parse(gbk_file, "genbank"):
+            for feature in record.features:
+                if feature.type == "CDS" and "translation" in feature.qualifiers:
+                    protein_id = feature.qualifiers.get("locus_tag", ["unknown"])[0]
+                    
+                    if protein_id not in extracted_proteins:
+                        translation = feature.qualifiers["translation"][0]
+                        out_f.write(f">{protein_id}\n{translation}\n")
+                        extracted_proteins.add(protein_id)
+
+print(f"Extracted {len(extracted_proteins)} unique proteins to {output_faa}")
+EOF
+
+# Run the protein extraction
+python extract_proteins.py
+
+# Count extracted proteins
+grep -c '>' BGC_proteins_validated.faa
+
+###############################################################################
+# MIBiG Database Comparison
+# BLAST search against MIBiG database for known BGC identification
+###############################################################################
+
+#!/bin/bash
+
+# BLAST search against MIBiG database
+cd "/path/04_Functional_Annotation/Output_data/antiSMASH_results/T_virens"
+
+# Run BLASTp against MIBiG database
+MIBIG_DB="/path/04_Functional_Annotation/Output_data/antiSMASH_results/mibig_prot_db/mibig_prot_db"
+
+blastp \
+  -query BGC_proteins_validated.faa \
+  -db "$MIBIG_DB" \
+  -out mibig_blast_final.tsv \
+  -evalue 1e-5 \
+  -num_threads 12 \
+  -outfmt "6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore"
+
+# Filter for top hits per query 
+awk '{if (!seen[$1]++) print}' mibig_blast_final.tsv > mibig_blast_final_top.tsv 
+
+# Count filtered proteins 
+echo "Number of significant hits:" 
+wc -l mibig_blast_final_top.tsv 
+
+# Filter by significance criteria
+awk '$3 >= 30 && $11 <= 1e-10 && $4 >= 100' mibig_blast_final_top.tsv > mibig_blast_final_filtered.tsv 
+
+# Count filtered proteins 
+echo "Number of significant hits:" 
+wc -l mibig_blast_final_filtered.tsv
+
+###############################################################################
+# BLAST Results Conversion to Excel
+# Convert BLAST results to Excel format for reporting
+###############################################################################
+
+#!/bin/bash
+
+# Convert BLAST results to Excel format
+cd "/path/04_Functional_Annotation/Output_data/antiSMASH_results/T_virens"
+
+# Create conversion script
+cat > blast_to_excel.py << 'EOF'
+#!/usr/bin/env python3
+import pandas as pd
+
+# Read the filtered TSV file (no headers)
+df = pd.read_csv('mibig_blast_final_filtered.tsv', sep='\t', header=None)
+
+# Assign column names based on BLAST outfmt 6 format
+blast_columns = [
+    'Query ID', 'Subject ID Full', 'Percentage Identity', 'Alignment Length',
+    'Mismatches', 'Gap Opens', 'Query Start', 'Query End',
+    'Subject Start', 'Subject End', 'E-value', 'Bit Score'
+]
+df.columns = blast_columns
+
+# Function to extract clean MIBiG ID and annotation
+def parse_mibig_id(full_id):
+    parts = str(full_id).split('|')
+    clean_id = parts[0] if parts else full_id
+    annotation = parts[-2] if len(parts) > 2 else 'Unknown'
+    return clean_id, annotation
+
+# Apply parsing to create new columns
+df[['MIBiG Subject ID', 'Annotation']] = df['Subject ID Full'].apply(
+    lambda x: pd.Series(parse_mibig_id(x))
+)
+
+# Select only the columns you want in the final output
+final_columns = [
+    'Query ID', 
+    'MIBiG Subject ID', 
+    'Percentage Identity', 
+    'Alignment Length', 
+    'E-value', 
+    'Bit Score', 
+    'Annotation'
+]
+
+final_df = df[final_columns]
+
+# Rename columns to match your desired headers exactly
+final_df = final_df.rename(columns={
+    'Percentage Identity': '% Identity',
+    'Alignment Length': 'Alignment Length',
+    'E-value': 'E-value',
+    'Bit Score': 'Bit Score'
+})
+
+# Save to Excel
+final_df.to_excel('mibig_blast_filtered_final.xlsx', index=False, engine='openpyxl')
+
+print("✅ Excel file created: mibig_blast_filtered_final.xlsx")
+print(f"📊 Total high-confidence hits: {len(final_df)}")
+print("📋 Columns included: Query ID, MIBiG Subject ID, % Identity, Alignment Length, E-value, Bit Score, Annotation")
+EOF
+
+# Run the conversion
+python blast_to_excel.py
+
+###############################################################################
+# Pfam Domain Analysis with HMMER
+# Identify protein domains in BGC proteins
+###############################################################################
+
+#!/bin/bash
+
+# Pfam domain analysis with HMMER
+cd "/path/04_Functional_Annotation/Output_data/antiSMASH_results/T_virens"
+
+# Run hmmscan against Pfam database
+PFAM_DB="/path/04_Functional_Annotation/Output_data/antiSMASH_results/T_asperellum/Pfam-A.hmm"
+
+hmmscan --cpu 12 --domtblout pfam_final.domtblout "$PFAM_DB" BGC_proteins_validated.faa > hmmscan_final.log
+
+# Analyze hmmscan results
+# Count how many significant domain hits were found in total
+grep -v '^#' pfam_final.domtblout | awk '$7 < 1e-5' | wc -l
+
+# Count how many unique proteins have at least one significant domain hit
+grep -v '^#' pfam_final.domtblout | awk '$7 < 1e-5 {print $4}' | sort -u | wc -l
