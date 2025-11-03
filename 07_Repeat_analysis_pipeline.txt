@@ -1,0 +1,122 @@
+###############################################################################
+# Repeat Analysis Pipeline: RepeatMasker and RepeatModeler
+# Exact code used in the research analysis
+#
+# PURPOSE: Identify and mask repetitive elements in Trichoderma genomes
+# INPUT: Genome assemblies in FASTA format
+# OUTPUT: Repeat libraries, masked genomes, repeat annotations
+# TOOLS: RepeatModeler, RepeatMasker, RMBlast, TRF, CD-HIT
+# PARAMETERS: -LTRStruct, 12 threads, cd-hit-est 0.95 identity
+# NOTES: Builds species-specific and combined repeat libraries
+###############################################################################
+
+#!/bin/bash
+
+# Download RepeatMasker
+cd ~/tools
+wget http://www.repeatmasker.org/RepeatMasker-4.1.5.tar.gz
+tar -zxvf RepeatMasker-4.1.5.tar.gz
+
+# Download RMBlast
+cd ~/tools/RepeatMasker-4.2.0
+wget https://www.repeatmasker.org/rmblast/rmblast-2.14.1+-x64-linux.tar.gz
+
+# Unpack RMBlast
+tar -xzvf rmblast-2.14.1+-x64-linux.tar.gz
+mv rmblast-2.14.1 rmblast
+
+# Configure RepeatMasker to Use RMBlast
+perl ./configure
+
+# Download and Register TRF (Tandem Repeats Finder)
+cd ~/tools
+wget https://github.com/Benson-Genomics-Lab/TRF/releases/download/v4.09.1/trf409.linux64
+
+# Make TRF Executable
+chmod +x trf409.linux64
+
+# Move TRF into RepeatMasker Folder
+mv trf409.linux64 RepeatMasker-4.2.0/trf
+
+###############################################################################
+# RepeatModeler Analysis for Individual Genomes
+# Build databases and discover repeats for each Trichoderma species
+###############################################################################
+
+#!/bin/bash
+
+# Add genome files in a directory 
+# Build RepeatModeler Databases and Discover Repeats for each genome
+
+# General plan for all genomes (repeat manually for each species)
+cd ~/Trichoderma_pan_genome_clean_run/genomes/fasta
+
+species=T_harzianum
+outdir="../repeatmodeler_output/$species"
+mkdir -p "$outdir"
+
+BuildDatabase -name "$outdir/${species}_db" "$species.fasta"
+RepeatModeler -database "$outdir/${species}_db" -threads 12 -LTRStruct > "$outdir/run.log"
+
+# Example for T. harzianum
+mkdir -p ../repeatmodeler_output/T_harzianum
+BuildDatabase -name ../repeatmodeler_output/T_harzianum/T_harzianum_db T_harzianum.fasta
+RepeatModeler -database ../repeatmodeler_output/T_harzianum/T_harzianum_db -threads 12 -LTRStruct > ../repeatmodeler_output/T_harzianum/run.log
+
+# Example for T. asperellum
+mkdir -p ../repeatmodeler_output/T_asperellum
+BuildDatabase -name ../repeatmodeler_output/T_asperellum/T_asperellum_db T_asperellum.fasta
+RepeatModeler -database ../repeatmodeler_output/T_asperellum/T_asperellum_db -threads 12 -LTRStruct > ../repeatmodeler_output/T_asperellum/run.log
+
+# To Monitor Progress
+tail -n 20 ../repeatmodeler_output/T_reesei/run.log
+
+# Inspect the output directory and make sure the critical file T_species_db-families.fa exists there
+ls -lh ../repeatmodeler_output/T_species
+
+###############################################################################
+# Combined Repeat Library Creation
+# Concatenate and deduplicate repeat families from all species
+###############################################################################
+
+#!/bin/bash
+
+# Create Directory for Combined Library
+mkdir -p ../combined_repeat_library
+
+# Concatenate All *_db-families.fa Files
+cat T_*/T*_db-families.fa > combined_repeat_library/Trichoderma_combined_repeats.fa
+
+# Verify Contents
+grep ">" combined_repeat_library/Trichoderma_combined_repeats.fa | wc -l
+head -n 5 combined_repeat_library/Trichoderma_combined_repeats.fa
+
+# Deduplicate the combined_repeats.fa
+# First install cd-hit-est
+sudo apt update
+sudo apt install cd-hit
+
+# Run cd-hit-est
+cd-hit-est \
+  -i combined_repeats.fa \
+  -o combined_repeats_nr.fa \
+  -c 0.95 \
+  -n 8 \
+  -T 4 \
+  -M 16000
+
+###############################################################################
+# RepeatMasker Analysis
+# Mask genomes using the non-redundant repeat library
+###############################################################################
+
+#!/bin/bash
+
+# Launch into masking, one genome at a time using the non-redundant repeat library
+RepeatMasker \
+  -pa 10 \
+  -lib /path/Trichoderma_pan_genome_clean_run/genomes/repeatmodeler_output/combined_repeat_library/Trichoderma_combined_repeats_nr.fa \
+  -dir /path/Trichoderma_pan_genome_clean_run/genomes/repeatmodeler_output/repeatmasker_output/T_harzianum \
+  -gff -html -nolow -xsmall \
+  -e ncbi \
+  /path/Trichoderma_pan_genome_clean_run/genomes/T_harzianum/ncbi_dataset/data/GCA_010015525.1/GCA_010015525.1_ASM1001552v1_genomic.fna
