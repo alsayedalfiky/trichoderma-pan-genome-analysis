@@ -1,0 +1,68 @@
+###############################################################################
+# dbCAN CAZyme Annotation pipeline for Trichoderma species
+# Exact code used in the research analysis
+#
+# PURPOSE: Identify carbohydrate-active enzymes in Trichoderma proteomes
+# INPUT: Protein sequences from Funannotate predictions
+# OUTPUT: CAZyme families (GH, GT, PL, CE, AA, CBM), validation results
+# TOOLS: DIAMOND, HMMER, dbCAN2 database
+# PARAMETERS: E-value < 1e-11, identity > 30%, coverage > 70%
+# NOTES: Uses two-step validation with DIAMOND and HMMER
+###############################################################################
+
+#!/bin/bash
+
+## Set variables for consistent use
+PROTEOME="/path/04_Functional_Annotation/Input_data/T_harzianum/Trichoderma_harzianum_T11_W.proteins.fa"
+DB="/path/dbCAN2_db/diamond_db.dmnd"
+HMMDB="/path/dbCAN2_db/dbCAN-HMMdb-V13.txt"
+
+# DIAMOND search against CAZy database
+diamond blastp \
+--query $PROTEOME \
+--db $DB \
+--out diamond.full.tsv \
+--outfmt 6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore qlen \
+--threads 12
+
+# Applies a strict, publication-ready filter to keep only the highest quality matches based on: 
+# statistical significance (E-value), sequence similarity (Identity), and coverage (how much of the protein aligned).
+awk -F'\t' '$11 < 1e-11 && $3 > 30 && (($8 - $7 + 1) / $13 * 100) > 70' diamond.full.tsv > diamond.filtered.strict.tsv
+
+# Select best hit per protein
+sort -k1,1 -k12,12nr diamond.filtered.strict.tsv | awk '!seen[$1]++' > diamond.final_cazymes.tsv
+
+# HMMER validation steps
+# Create ID list and extract sequences
+cut -f1 diamond.final_cazymes.tsv > potential_cazyme_ids.txt
+
+# extract sequences
+seqtk subseq $PROTEOME potential_cazyme_ids.txt > potential_cazymes.fa
+
+# Run HMMER search
+hmmsearch --domtblout hmmer_validation.tsv --cpu 12 $HMMDB potential_cazymes.fa
+
+# Apply HMMER filter (domain E-value < 1e-15) and get validated IDs
+awk '$12 < 1e-15 && $12 != "-"' hmmer_validation.tsv | cut -f1 -d ' ' | sort -u > validated_cazyme_ids.txt
+
+# Create the final, validated CAZyme table
+awk 'NR==FNR {valid[$1]; next} $1 in valid' validated_cazyme_ids.txt diamond.final_cazymes.tsv > final_validated_cazymes.tsv
+
+# Count the final numbers
+echo "Validated IDs:" && wc -l validated_cazyme_ids.txt
+
+# Count the final numbers
+echo "Final CAZymes:" && wc -l final_validated_cazymes.tsv
+
+# Create the final FASTA file
+seqtk subseq $PROTEOME validated_cazyme_ids.txt > T_harzianum_CAZymes.final.fa
+
+# Get the class distribution
+awk -F'\t' '{split($2, a, "|"); print a[length(a)]}' final_validated_cazymes.tsv | awk 'BEGIN {gh=0;gt=0;pl=0;ce=0;aa=0;cbm=0} {if ($1 ~ /^GH/) gh++; else if ($1 ~ /^GT/) gt++; else if ($1 ~ /^PL/) pl++; else if ($1 ~ /^CE/) ce++; else if ($1 ~ /^AA/) aa++; else if ($1 ~ /^CBM/) cbm++} END {print "GH:", gh; print "GT:", gt; print "PL:", pl; print "CE:", ce; print "AA:", aa; print "CBM:", cbm; print "Total:", gh+gt+pl+ce+aa+cbm}' > T_harzianum_CAZyme_class_distribution.txt
+
+# Create the non-redundant Excel files with only the best hit for each validated CAZyme
+# Create TSV with best hits only
+awk 'NR==FNR {valid[$1]; next} $1 in valid' validated_cazyme_ids.txt diamond.full.tsv | sort -k1,1 -k12,12nr | awk '!seen[$1]++' | awk -F'\t' 'BEGIN {OFS="\t"; print "ID", "SseqID", "Qstart", "Qend", "Sstart", "Send", "evalue", "score", "pident", "qcovs", "CAZy_Family"} {split($2, a, "|"); family=a[length(a)]; qcovs=($8-$7+1)/$13*100; print $1, $2, $7, $8, $9, $10, $11, $12, $3, qcovs, family}' > T_harzianum_CAZymes_detailed_BEST.tsv
+
+# Convert to Excel
+ssconvert T_harzianum_CAZymes_detailed_BEST.tsv T_harzianum_CAZymes_detailed_BEST.xlsx
