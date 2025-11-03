@@ -1,0 +1,125 @@
+###############################################################################
+# NCBI Protein Data Retrieval and Processing Pipeline
+# Exact code used in the research analysis
+#
+# PURPOSE: Build comprehensive protein database for annotation evidence
+# INPUT: NCBI RefSeq proteins for Trichoderma species
+# OUTPUT: Non-redundant protein database, BLAST databases
+# TOOLS: ncbi-entrez-direct, seqkit, CD-HIT, BLAST+
+# PARAMETERS: CD-HIT 0.99 identity, length > 100aa, fragment filtering
+# NOTES: Creates pooled Trichoderma protein database for cross-species evidence
+###############################################################################
+
+#!/bin/bash
+
+# Install NCBI Entrez Direct toolkit
+sudo apt update
+sudo apt install ncbi-entrez-direct
+
+###############################################################################
+# Species-Specific Protein Retrieval from RefSeq
+# Search and download curated protein sequences for individual Trichoderma species
+###############################################################################
+
+#!/bin/bash
+
+# Search and download all curated protein sequences from the RefSeq collection 
+# that belong to the fungus Trichoderma harzianum, and save them into a local file for subsequent analysis
+# For example, in "Trichoderma harzianum" 
+esearch -db protein -query "Trichoderma harzianum[Organism] AND srcdb_refseq[PROP]" | \
+efetch -format fasta > T_harzianum_refseq.faa
+
+# To confirm it worked and see how many sequences were retrieved
+# Head to directory and replace XX with species name
+cd ~/path/
+head T_XX_refseq.faa
+grep -c "^>" T_XX_refseq.faa
+
+# Step 2: Filter by Length and Fragment Tags
+seqkit seq -m 100 T_XX_refseq.faa | seqkit grep -v -r -p "fragment" > T_XX.cleaned.faa
+
+# Step 3: Run CD-HIT Deduplication
+cd-hit -i T_XX.cleaned.faa -o T_XX.nr.faa -c 0.99 -n 5 -T 4 -M 16000
+
+# For final curation statistics (e.g., sequence count, average length)
+seqkit stats T_species.nr.faa
+
+###############################################################################
+# Trichoderma longibrachiatum Specific Processing
+# Additional filtering and redundancy removal for T. longibrachiatum
+###############################################################################
+
+#!/bin/bash
+
+# Filter Short Sequences and Fragments for T. longibrachiatum
+seqkit seq -m 101 -r -p /path/T_longibrachiatum_protein_filtered_cdhit.faa \
+  | seqkit grep -v -r -p 'fragment' \
+  > /path/T_longibrachiatum_filtered.faa
+
+# Search in NCBI protein DB for Trichoderma longibrachiatum
+esearch -db protein -query "Trichoderma longibrachiatum[Organism]" \
+  | efetch -format fasta > ~/path/T_longibrachiatum_all.faa
+
+# Remove redundancy and retain high-confidence sequences
+cd-hit -i T_longibrachiatum_all.faa -o T_longibrachiatum_nr.faa -c 0.99 -n 5 -d 0 -M 16000 -T 4
+
+# Post-run, check sequence count and headers
+grep -c '^>' ~/path/T_longibrachiatum_nr.faa
+
+###############################################################################
+# Comprehensive Trichoderma Protein Database
+# Build a complete Trichoderma protein database from RefSeq
+###############################################################################
+
+#!/bin/bash
+
+# Search and download all Trichoderma RefSeq database proteins into a FASTA file
+esearch -db protein -query "Trichoderma[Organism] AND srcdb_refseq[PROP]" | efetch -format fasta > /path/RefSeq_Trichoderma_proteins.faa
+
+# Build a BLAST Database to create a searchable protein database for BLAST
+makeblastdb -in /path/RefSeq_Trichoderma_proteins.faa \
+  -dbtype prot \
+  -out /path/RefSeq_Trichoderma_proteins_db \
+  -parse_seqids
+
+###############################################################################
+# BLAST-Based Sequence Validation
+# Validate sequences against RefSeq database using BLAST
+###############################################################################
+
+#!/bin/bash
+
+# BLAST Filtering Command for T. longibrachiatum
+blastp -query /path/T_longibrachiatum_filtered.faa \
+  -db /path/RefSeq_Trichoderma_proteins_db \
+  -outfmt 6 -evalue 1e-5 -max_target_seqs 1 -num_threads 10 \
+  -out /path/T_longibrachiatum_vs_RefSeq.tsv
+
+# Extract Supported IDs
+cut -f1 /path/T_longibrachiatum_vs_RefSeq.tsv \
+  | sort | uniq > /path/supported_ids.txt
+
+# Retrieve Sequences
+seqkit grep -f /path/supported_ids.txt \
+  /path/T_longibrachiatum_filtered.faa \
+  > /path/T_longibrachiatum_supported.faa
+
+# Count Retained Proteins
+grep -c '^>' /path/T_longibrachiatum_supported.faa
+
+###############################################################################
+# Final Protein Database Compilation
+# Create comprehensive non-redundant protein database
+###############################################################################
+
+#!/bin/bash
+
+# Concatenate protein sets
+cat *.faa > 
+
+# Deduplicate with CD-HIT at 99% identity
+cd-hit -i pooled_proteins_raw.faa -o pooled_proteins_cdhit99.faa -c 0.99 -n 5 -T 10 -M 16000
+
+# Count Sequences in FASTA Files before and after deduplication
+grep -c '^>' /path/pooled_Trichoderma_proteins.faa
+grep -c '^>' /path/pooled_Trichoderma_cdhit99.faa
