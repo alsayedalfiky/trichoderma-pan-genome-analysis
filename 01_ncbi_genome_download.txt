@@ -1,0 +1,24 @@
+###############################################################################
+# NCBI Genome Download and Processing
+# Exact code used in the research analysis
+#
+# PURPOSE: Download reference genomes from NCBI for multiple Trichoderma species
+# INPUT: NCBI accession numbers (GCA_036169685.1, GCA_002006585.1, etc.)
+# OUTPUT: .fna genomic files for each Trichoderma species
+# TOOLS: ncbi-datasets-cli
+# PARAMETERS: Standard genome download with --include genome flag
+# NOTES: Downloads 6 Trichoderma genomes for comparative analysis
+###############################################################################
+
+#!/bin/bash
+
+# Install NCBI's datasets CLI tool
+sudo apt update
+sudo apt install ncbi-datasets-cli
+
+# Download genome files from NCBI
+for ACC in GCA_036169685.1 GCA_002006585.1 GCA_026401105.1 GCA_026259275.1 GCA_003025115.1 GCA_010015525.1; do
+    datasets download genome accession $ACC --include genome
+    unzip ncbi_dataset.zip
+    mv ncbi_dataset/data/$ACC/*.fna .
+done
