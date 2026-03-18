@@ -76,6 +76,7 @@ done
 # -----------------------------------------------------------------------------
 # Step 1: FastQC quality control
 # -----------------------------------------------------------------------------
+
 if [[ "$RUN_FASTQC" == "yes" ]]; then
     echo ">>> Step 1: Running FastQC on all FASTQ files..."
     for species in "${SPECIES_NAMES[@]}"; do
