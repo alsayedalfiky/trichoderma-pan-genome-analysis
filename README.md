@@ -41,7 +41,18 @@ The analysis follows a multi-step modular progression. While parameters are opti
 
 Each script in the `/scripts` directory is modular and can be run independently. You can use default relative paths or provide custom arguments.
 
-### Example: Gene Prediction (Script 02)
+### Step 01: Genome Acquisition
+This script automates the download and organization of the 6 *Trichoderma* reference genomes from NCBI.
+
+**Usage:**
+```bash
+# Download the 6 study accessions into /genomes
+bash scripts/01_ncbi_genome_download.sh
+
+# Or download custom accessions by passing them as arguments
+bash scripts/01_ncbi_genome_download.sh GCA_000001234.1 GCA_000005678.1
+
+### Step 02: Gene Prediction (Script 02)
 This pipeline runs `funannotate predict` using evidence-based parameters optimized for *Trichoderma*.
 
 **Default input files (place them in the `input/` folder at the repository root):**
