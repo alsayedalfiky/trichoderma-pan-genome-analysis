@@ -1,0 +1,25 @@
+name: trichobase_master
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.11
+  - antismash=8.0.2
+  - orthofinder=3.1.0
+  - eggnog-mapper=2.1.13
+  - cafe=5.1.0
+  - dbcan=5.1.2
+  - mafft=7.525
+  - iqtree=3.0.1
+  - blast=2.17.0
+  - hmmer=3.4
+  - diamond=2.1.13
+  - fastani=1.34
+  - seqkit=2.10.1
+  - pandas=2.3.2
+  - seaborn=0.13.2
+  - pip
+  - pip:
+      - signalp6==6.0
+      - torch==1.13.1
