@@ -36,3 +36,27 @@ The analysis follows a multi-step modular progression. While parameters are opti
 - OrthoFinder v3.1.0
 
 - CAFE v5.1.0
+
+##  How to Run the Pipeline
+
+Each script in the `/scripts` directory is modular and can be run independently. You can use default relative paths or provide custom arguments.
+
+### Example: Gene Prediction (Script 02)
+This pipeline runs `funannotate predict` using evidence-based parameters optimized for *Trichoderma*.
+
+**Default input files (place them in the `input/` folder at the repository root):**
+* `genome.fasta` – Masked assembly.
+* `transcripts.fa` – Transcript evidence (FASTA).
+* `proteins.faa` – Protein evidence (FASTA).
+
+**Default output:** Results will be written to the `output/` directory, including a log file `funannotate_predict.log`.
+
+**Prerequisites:** [Funannotate](https://github.com/nextgenusfs/funannotate) v1.8+ must be installed and available in your PATH.
+
+**Usage:**
+```bash
+# Option A: Use default paths (after placing files in input/)
+bash scripts/02_funannotate_annotation.sh
+
+# Option B: Specify custom paths and metadata
+bash scripts/02_funannotate_annotation.sh <genome> <outdir> <species> <strain> <transcripts> <proteins>
