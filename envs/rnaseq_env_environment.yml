@@ -1,0 +1,12 @@
+name: rnaseq
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - stringtie
+  - sra-tools
+  - fastqc
+  - samtools
+  - hisat2
+  - gffcompare

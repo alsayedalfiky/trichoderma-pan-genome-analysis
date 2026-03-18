@@ -1,0 +1,11 @@
+name: repeatmasking
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - trf
+  - repeatmodeler
+  - repeatmasker
+  - rmblast
+  - perl
